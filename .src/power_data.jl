@@ -53,17 +53,27 @@ consumers = [
     (11, 0.04), # C7
 ]
 
-# ---- Aggregate per node (nodes without generator/consumer get 0) -----------
-gmax = zeros(N)   # g_k^max : total generation capacity at node k
-c = zeros(N)      # c_k     : total active demand at node k
-for (node, cap, _) in generators
-    gmax[node] += cap
-end
-for (node, d) in consumers
-    c[node] += d
-end
+# ---- Per-generator / per-consumer vectors and node membership --------------
+NG = length(generators)
+NC = length(consumers)
+gen_node  = [gen[1] for gen in generators]
+gen_cap   = [gen[2] for gen in generators]   # [pu]
+gen_price = [gen[3] for gen in generators]   # [SEK/pu]
+con_node  = [con[1] for con in consumers]
+con_dem   = [con[2] for con in consumers]    # [pu]
+
+gens_at = [findall(==(k), gen_node) for k in 1:N]   # generator indices located at node k
+cons_at = [findall(==(k), con_node) for k in 1:N]   # consumer indices located at node k
+
+# Node totals (only used for the plots / for colouring nodes)
+gmax = [sum(gen_cap[j] for j in gens_at[k]; init = 0.0) for k in 1:N]
+c    = [sum(con_dem[j] for j in cons_at[k]; init = 0.0) for k in 1:N]
 
 # ---- Other parameters ------------------------------------------------------
 Vmin = 0.98
 Vmax = 1.02
-q_ratio = 0.03   # reactive capacity ratio used in g^[r+] and g^[r-]
+q_ratio = 0.03       # reactive capacity ratio used in g^[r+] and g^[r-]
+
+
+# Cost normalisation: mean full-output cost of a generator, cap_j * price_j [SEK]
+cost_ref = sum(gen_cap .* gen_price) / NG    # ≈ 29.8 SEK
