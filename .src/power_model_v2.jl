@@ -32,23 +32,19 @@ model = Model(Ipopt.Optimizer)
     ),
 )
 
-# ---- Node quantities -------------------------------------------------------
-@expression(
-    model,
-    active_generation[node = 1:num_nodes],
-    sum(active_flow[(neighbour, node)] for (neighbour, target) in arcs if target == node) +
-    sum(active_usage[g] * generator_capacity[g] for g in generators_at_node[node]; init = 0.0),
-)
-@expression(
-    model,
-    reactive_generation[node = 1:num_nodes],
-    sum(reactive_flow[(neighbour, node)] for (neighbour, target) in arcs if target == node) +
-    reactive_ratio * sum(reactive_usage[g] * generator_capacity[g] for g in generators_at_node[node]; init = 0.0),
-)
+# ---- Node quantities (flows measured at the node, leaving into the lines) ---
 @expression(
     model,
     active_mismatch[node = 1:num_nodes],
-    active_generation[node] - sum(consumer_demand[c] for c in consumers_at_node[node]; init = 0.0),
+    sum(active_usage[g] * generator_capacity[g] for g in generators_at_node[node]; init = 0.0) -
+    sum(consumer_demand[c] for c in consumers_at_node[node]; init = 0.0) -
+    sum(active_flow[(node, neighbour)] for (sender, neighbour) in arcs if sender == node),
+)
+@expression(
+    model,
+    reactive_mismatch[node = 1:num_nodes],
+    reactive_ratio * sum(reactive_usage[g] * generator_capacity[g] for g in generators_at_node[node]; init = 0.0) -
+    sum(reactive_flow[(node, neighbour)] for (sender, neighbour) in arcs if sender == node),
 )
 @expression(
     model,
@@ -56,18 +52,18 @@ model = Model(Ipopt.Optimizer)
     sum(active_usage[g] * generator_capacity[g] * generator_price[g] for g in generators_at_node[node]; init = 0.0) / cost_reference,
 )
 
-# ---- System-wide balance ---------------------------------------------------
 @constraint(
     model,
     system_balance,
-    sum(active_usage[g] * generator_capacity[g] for g in 1:num_generators) - sum(consumer_demand) == 0,
+    sum(active_usage[g] * generator_capacity[g] for g in 1:num_generators) >= sum(consumer_demand),
 )
 
+tuning_param = 0.00001
 # ---- Objective -------------------------------------------------------------
 @objective(
     model,
     Min,
-    sum(active_mismatch[node]^2 + reactive_generation[node]^2 + cost_weight * normalized_cost[node] for node in 1:num_nodes),
+    sum(active_mismatch[node]^2 + reactive_mismatch[node]^2 + tuning_param*cost_weight * normalized_cost[node] for node in 1:num_nodes),
 )
 
 println(model)
@@ -81,9 +77,10 @@ println("Reactive usage per generator = ", round.(value.(reactive_usage); digits
 println("Voltage            = ", round.(value.(voltage); digits = 4))
 println("Angle [rad]        = ", round.(value.(angle); digits = 4))
 println("Active mismatch    = ", round.(value.(active_mismatch); digits = 5))
-println("Reactive generation = ", round.(value.(reactive_generation); digits = 5))
+println("Reactive mismatch  = ", round.(value.(reactive_mismatch); digits = 5))
 println("Generation cost [SEK] = ", cost_reference * sum(value.(normalized_cost)))
 println("Total generation = ", sum(value.(active_usage) .* generator_capacity), "  total demand = ", sum(consumer_demand))
+println("Total active loss = ", sum(value(active_flow[arc]) for arc in arcs))
 println("Dual of system balance = ", dual(system_balance))
 
 # ---- Plots -----------------------------------------------------------------
@@ -174,7 +171,7 @@ function plot_network(flow, is_reactive::Bool)
             end
         end
         if show_mismatch
-            mismatch = is_reactive ? value(reactive_generation[node]) : value(active_mismatch[node])
+            mismatch = is_reactive ? value(reactive_mismatch[node]) : value(active_mismatch[node])
             symbol   = is_reactive ? "gʳ" : "ΔP"
             push!(lines, "$symbol$(subscript(node)) = $(format_number(MILLI * mismatch, 2)) mPU")
         end
