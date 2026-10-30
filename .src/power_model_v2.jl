@@ -48,40 +48,33 @@ model = Model(Ipopt.Optimizer)
 )
 @expression(
     model,
-    normalized_cost[node = 1:num_nodes],
-    sum(active_usage[g] * generator_capacity[g] * generator_price[g] for g in generators_at_node[node]; init = 0.0) / cost_reference,
+    generation_cost[node = 1:num_nodes],
+    sum(active_usage[g] * generator_capacity[g] * generator_price[g] for g in generators_at_node[node]; init = 0.0),
 )
 
-@constraint(
-    model,
-    system_balance,
-    sum(active_usage[g] * generator_capacity[g] for g in 1:num_generators) >= sum(consumer_demand),
-)
+# ---- Node balances: one active and one reactive equality per node -----------
+@constraint(model, active_balance[node = 1:num_nodes], active_mismatch[node] == 0)
+@constraint(model, reactive_balance[node = 1:num_nodes], reactive_mismatch[node] == 0)
 
-tuning_param = 0.00001
-# ---- Objective -------------------------------------------------------------
-@objective(
-    model,
-    Min,
-    sum(active_mismatch[node]^2 + reactive_mismatch[node]^2 + tuning_param*cost_weight * normalized_cost[node] for node in 1:num_nodes),
-)
+# ---- Objective: total production cost [SEK] ---------------------------------
+@objective(model, Min, sum(generation_cost[node] for node in 1:num_nodes))
 
 println(model)
 optimize!(model)
 
 println("")
 println("Termination status: ", termination_status(model))
-println("Optimal objective function value: ", objective_value(model))
+println("Optimal objective function value (cost) [SEK]: ", objective_value(model))
 println("Active usage per generator   = ", round.(value.(active_usage); digits = 4))
 println("Reactive usage per generator = ", round.(value.(reactive_usage); digits = 4))
 println("Voltage            = ", round.(value.(voltage); digits = 4))
 println("Angle [rad]        = ", round.(value.(angle); digits = 4))
-println("Active mismatch    = ", round.(value.(active_mismatch); digits = 5))
-println("Reactive mismatch  = ", round.(value.(reactive_mismatch); digits = 5))
-println("Generation cost [SEK] = ", cost_reference * sum(value.(normalized_cost)))
+println("Active mismatch    = ", value.(active_mismatch))
+println("Reactive mismatch  = ", value.(reactive_mismatch))
 println("Total generation = ", sum(value.(active_usage) .* generator_capacity), "  total demand = ", sum(consumer_demand))
 println("Total active loss = ", sum(value(active_flow[arc]) for arc in arcs))
-println("Dual of system balance = ", dual(system_balance))
+println("Dual of active balance (SEK/pu)   = ", round.(dual.(active_balance); digits = 2))
+println("Dual of reactive balance (SEK/pu) = ", round.(dual.(reactive_balance); digits = 2))
 
 # ---- Plots -----------------------------------------------------------------
 pixel_position = Dict(1 => (215, 50),  2 => (157, 152), 11 => (288, 187), 3 => (94, 262),
